@@ -1,0 +1,674 @@
+---
+output:
+   bookdown::pdf_book:
+    includes:
+        before_body: title_page.sty #Title page 
+    citation_package: natbib #activate bibliography option
+    highlight: tango # specifies the syntax highlighting style
+    latex_engine: xelatex
+    number_sections: yes # to enumerate sections at each table header.
+    toc: yes # activate table of contents
+    toc_depth: 4 #up to 4 depths of headings (specified by #, ##, ###, ####)
+mainfont: Lato #font style
+header-includes: \renewcommand{\contentsname}{Summary}
+urlcolor: blue
+bibliography: bibliography.bib
+biblio-style: apalike
+link-citations: TRUE
+---
+
+\newpage
+# Introduction
+
+This is the final report to obtain the professional certificate grade from Hardardx. The goal of this final exercise is to apply a machine learning method to a free database or a personal provided database. In this case, it was decided to use the database **Forest Covertype data**, provided by the *Remote Sensing and GIS program Department of Forest Sciences College of Natural Resources Colorado State University*. The data was released free in 1998, and it can be downloaded by this [link](https://archive.ics.uci.edu/ml/datasets/Covertype).
+
+The purpose of this project is to predict forest covers from cartographic variables such as elevation, slope, distance to roads and others. The unit analysis are cells with a size of 30 x 30 meter determined by the US Forest Service (USFS), while independent variables were obtained from US Geological Survey (USGS) [@covertypeforest]. The research area is compounded by four wilderness areas in the Roosevelt National Forest Colorado characterised by being with minimal human-caused disturbances [@covertypeforest]. 
+
+It was selected this problematic, because it is a breakthrough in the thematic improving the tree classification to a high accuracy level. This undoubtedly can help policymakers and environmental policies to identify priorities areas to protect certain biodiversity or trees as in this case. Furthermore, the selected machine learning method was **random tree forest**. This decision is based on the amount and type of data, which frames the scope of the application. In the next steps it is justified this decision.
+ 
+The next section shows starting how was the data imported and the corresponding exploration to determine what variable could light up a clue for the prediction. Then it is presented the machine learning methodology. Finally, it is displayed the results and the conclusions.
+
+```{r instlibraries, echo=FALSE, message=FALSE, warning=FALSE, error=FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+if(!require(purrr)) install.packages("purrr", repos = "http://cran.us.r-project.org")
+if(!require(scales)) install.packages("scales", repos = "http://cran.us.r-project.org")
+if(!require(treemapify)) install.packages("treemapify", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+```
+
+# Preprocessing
+
+## Libraries
+
+Diverse tools are necessary to run the project, thus the libraries here below where used through the project: 
+
+```{r loadinglibraries, message=FALSE, warning=FALSE}
+library(tidyverse)# organization and visualization data
+library(kableExtra) #for table presentations
+library(caret)# Used in the script, not in the report
+library(purrr)# to extract data info
+library(scales)# to add big mark point as thousand separator
+library(treemapify) # to create treemaps
+library(gridExtra) # to arrange plots in a grid
+library(randomForest) # to run random forest
+```
+
+## Importing Forest Covertype data & Exporting data
+
+### Starting processing
+
+First of all, it is necessary to create a link to connect R with the raw data to download it. Thus, it is created 2 temporal vectors, one for the dataset and  another one for the data info, which contains the raw column names.
+
+```{r eval=TRUE}
+options(width = 60) #to extend screen width to 10 characters per line
+#Download datasets
+df <- tempfile()#temporal datatable
+download.file(
+  "https://archive.ics.uci.edu/ml/machine-learning-databases/covtype/covtype.data.gz", df)
+infod <- tempfile()#temporal data info
+download.file(
+  "https://archive.ics.uci.edu/ml/machine-learning-databases/covtype/covtype.info", infod)
+
+trees_c <-str_split_fixed(readLines(gzfile(df)),",",55) #dataset
+info<-readLines(infod)# data info to assign column names to trees_c dataset
+```
+
+The dataset contains `r dim(trees_c)[1]*dim(trees_c)[2]` registers, which it can be understood as a big dataset (Table \@ref(tab:rtable-dimension)):
+
+```{r rtable-dimension,echo=FALSE,warning=FALSE}
+dimfr<-data.frame(dim(trees_c)[1],dim(trees_c)[2])
+colnames(dimfr)<-c("Rows", "Columns")
+dimfr%>% kbl(booktabs = TRUE, caption = "Raw data dimension",digits = 3, format.args = list(big.mark = ",",  scientific = FALSE), "latex")%>%kable_styling(latex_options = "hold_position") 
+```
+
+The relevant from this data is that there are 12 measurements, but represented with 54 columns. 10 are quantitative variables and 2 qualitative (wilderness area and Soil type), which are represented by 4 and 40 columns correspondingly. 
+The last column is the dependent variable which it will be predicted, the cover type. The table below indicated the attributes and characteristics, but not the cover type variable (Table \@ref(tab:table-description)):
+
+```{r table-description,echo=FALSE,warning=FALSE}
+load(file="rda_data/dtable.rda")
+dtable%>%kbl(format.args = list(big.mark = ",", 
+                                                scientific = FALSE),"latex", booktabs = TRUE, caption="Table data description") %>%
+  kable_styling(font_size = 7)%>%kable_styling(latex_options = "hold_position")
+```
+
+### Special consideration: 
+
+#### Aspect
+\hfill\break 
+Table \@ref(tab:table-description), shows that the *Aspect* variable is measured in *Azimuth* and is quantitative. Notwithstanding, for this topic it cannot be understood in that way, instead as a nominative data type. For example, when is treated this value as quantitative, the difference between 357 and 1 is 356. However, as a nominative in this respect, both values only have a difference of 4 and both indicate a north direction. 
+
+Due to this situation is aggregated the aspect values in values of 90° in a new column. So:
+
+* 315°-45°: North
+* 45°-135°: East
+* 135°-225°: South 
+* 225°-315°: West  
+
+```{r Aspect-script, eval=FALSE,echo=TRUE}
+#create new 4 columns to identify the north, east, south and west correspondingly.
+#they are dummy variables
+trees_c<-trees_c%>%mutate(
+              Aspect_1= (Aspect>=0 & Aspect<45 | Aspect>=315 & Aspect<=360)*1,#North
+              Aspect_2= (Aspect>=45 & Aspect<135)*1,#East
+              Aspect_3= (Aspect>=135 & Aspect<225)*1,#South
+              Aspect_4= (Aspect>=225 & Aspect<315)*1)#West
+
+
+trees_c$Aspect_label<-factor(
+  ifelse(
+    trees_c$Aspect >=0 & trees_c$Aspect<45 | trees_c$Aspect>=315 & trees_c$Aspect<=360,
+    "North",
+                             ifelse(trees_c$Aspect >=45 & trees_c$Aspect<135, "East",
+                                    ifelse(trees_c$Aspect >=135 & trees_c$Aspect <225,
+                                           "South",
+                                           "West"))),
+  levels = c("North","East","West","South"))
+
+```
+
+Additionally, it wass added **4** dummy columns for each orientation mentioned above, to facilitate the procedure.
+
+#### Soil type
+\hfill\break 
+This type is the most populous in the dataset, containing more than 40 classes. According to the results of [@Fernandes-Terra], it seems that is more relevant to find the proper dataset, rather than evaluating great number of variables. Thus, taking into account the soil data characteristics, it was performed a classification of the soil type according to its firsts digits codes, in which the first and second digit indicates climatic and geological zone correspondingly of the USFS Ecological Landtype Units [@covertypeforest]. As a result, it was split the soil type in soil climate zone (abb:s_cli) and soil geological zone (abb:soil_geo), decreasing the classes from 40 to 11 classes  (Table \@ref(tab:soil-cli-geo-table)).
+
+```{r soil-cli-geo-table, echo=FALSE, warning=FALSE,eval=TRUE}
+cligeotab<-data.frame(c("lower montane dry", "montane dry", "montane", "montane dry and montane", "montane and subalpine", "subalpine","alpine"),c("alluvium","glacial","mixed sedimentary","igneous and metamorphic","-","-","-" )) 
+colnames(cligeotab)<-c("Soil Climatic Zone","Soil Geological Zone")#Dividing
+#the data in 2 for a better visualization     
+cligeotab%>%kbl(format.args = list(big.mark = ",", 
+                                                scientific = FALSE),"latex", booktabs = TRUE, caption="Soil classifications") %>%
+  kable_styling(font_size = 7)%>%kable_styling(latex_options = "hold_position")
+```
+
+### Final adjustments
+
+To facilitate the analysis and visualization, it was added the following columns:
+
+* Id column
+* Wilderness area factor column
+* Soil climatic zone factor column
+* Soil geological zone factor column
+* Cover type factor column  
+
+In the end, the final raw dataset consists of the following dimensions (Table \@ref(tab:rtable-dimension-final)):
+
+```{r rtable-dimension-final,echo=FALSE,warning=FALSE}
+load(file="rda_data/trees_c.rda")# raw edited dataset
+dimfr<-data.frame(dim(trees_c)[1],dim(trees_c)[2])
+colnames(dimfr)<-c("Rows", "Columns")
+dimfr%>% kbl(booktabs = TRUE, caption = "Raw data dimension",digits = 3, format.args = list(big.mark = ",",  scientific = FALSE), "latex")%>%kable_styling(latex_options = "hold_position") 
+rm(trees_c)
+```
+
+### Exporting data: Training and Test data
+
+Random forest is a machine learning application, so it must be created a training data and testing data. **the former is for the algorithm creation, and the latter is for assessing our final algorithm**. Generally, during the procedure is used mostly the training data which for this project was the 90% of the dataset. The partialization was done through the **caret package**: **create DataPartition**. 
+
+From now on the training and testing data will be processed.
+
+# Analysis
+
+## Data description
+
+In order to reduce hardware processing, the training, testing data and other resources were loaded in this step.
+
+```{r echo=FALSE}
+load(file="rda_data/train_tc.rda") #train data
+load(file="rda_data/validation.rda") #test data
+load(file="rda_data/hill_plot.rda") #hillshades plots
+load(file="rda_data/dist_plot.rda") #horizontal and verticals distances plots
+#load(file="rda_data/rmses.rda")# used in results
+#load(file="rda_data/genres_edx.rda")# b_k of each rating
+#load(file="rda_data/genres_count.rda")#count of the existing genres
+#load(file="rda_data/genre_rating.rda") #average rating of each genre
+#load(file="rda_data/rat_time.rda")# rating date
+#load(file="rda_data/rmses.rda")# rmses data from cross-validation
+#load(file="rda_data/b_k.list.rda")# rmses data from cross-validation
+```
+
+Then, the visualized data of the data description section, **which corresponds to the training data**, is presented in the following order: dependent variable, qualitative variable and quantitative variable. 
+
+### Cover type
+
+The starting point is to know what it wants to be predicted. In this sense, the cover type variable is the dependent variable which consists in 7 categories.
+
+``` {r echo=FALSE}
+unique(train_tc$name_ctt)
+```
+
+The first question here is to know how they are represented on the sample. Let see the pixel number for each cover type (Figure \@ref(fig:barplot-tree-count-type)): 
+
+```{r barplot-tree-count-type, echo=FALSE, fig.width=5, fig.height=3,message=FALSE,fig.cap='Cover tree types count (top) and tree type (bottom)'}
+cover_tree_count <- sapply(unique(train_tc$name_ctt), function(g) {
+  sum((train_tc$name_ctt== g))})%>%
+  data.frame(count=.) %>% 
+  arrange(desc(.))
+cover_tree_count<-cover_tree_count%>%mutate(label=row.names(.),
+  prop=round((count/sum(cover_tree_count$count))*100,2))
+
+cover_tree_count %>% ggplot(aes(x= reorder(label,-count), y = count, fill=row.names(.))) +
+ geom_bar(stat='identity') + scale_fill_hue(c=60) + 
+  theme(legend.position="none",axis.text.x=element_text(angle = 40, hjust = 1)) + 
+  scale_y_continuous(labels = comma_format(big.mark = ",", decimal.mark = "."))+
+labs(x='', y='cover tree types count')
+```
+
+The Figure \@ref(fig:barplot-tree-count-type) unveils that there are 2 cover types (Lodgepole Pine, Spruce/Fir) predominates on the sample, while Cottonwood/Willow presence is marginal. Let's take a deeper view on the proportions (Figure \@ref(fig:proportion-treemap)). 
+
+This view clarifies that the outcome prevalence should be considered, when the analysis is performed. Approximately, the 85% cover type classification is concentrates in 2 types. 
+
+``` {r proportion-treemap, echo=FALSE, fig.width=5, fig.height=3,message=FALSE,fig.cap='Treemap plot'} 
+
+ggplot(cover_tree_count, aes(area=count, fill=label,
+                             subgroup=label)) + 
+  ggtitle("Cover tree types total proportion:")+
+  geom_treemap()+
+  #main group bordering with grey
+  geom_treemap_subgroup_border(colour="grey")+
+  #all other group text in white
+  geom_treemap_text(aes(label=paste0(label," \n", prop,"%")), color="white",
+                    min.size = 1)+
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_brewer(palette = "Set2")+
+  theme(plot.title = element_text(hjust = 0.5, size = 16),
+       legend.title = element_blank())
+```
+
+\newpage
+### Aspect
+
+Regarding this variable, let's see its distribution according to the cover type (Figure \@ref(fig:aspect-barplot)). 
+
+``` {r aspect-barplot, echo=FALSE, fig.width=5, fig.height=3,message=FALSE,fig.cap='Tree distribution by Aspect'} 
+train_tc %>% 
+  ggplot()+geom_bar(aes(x=name_ctt,fill=name_ctt)) +scale_y_continuous(trans='log10')+
+  labs(title="Using geom_label")+
+  facet_wrap(~Aspect_label,nrow = 2,ncol=2)+
+  labs(x=NULL, y='Count in log10')+
+  labs(title="Cover tree type distribution by orientation",fill="cover tree types")+
+  scale_x_discrete(labels = NULL,breaks=NULL)
+```
+
+The Figure \@ref(fig:aspect-barplot) is showing that practically the orientation does not have an implicit effect over the cover tree type distribution. Therefore, it was analysed the aspect variable to check if its values are independent or not by the chi-square test. 
+
+First, it was created a frequency table (Table \@ref(tab:fre-asp)). 
+
+``` {r fre-asp, echo=FALSE, fig.width=4, fig.height=3,message=FALSE,fig.cap='Frequency table Aspect'} 
+#Frequency table Aspect
+faspc<-train_tc %>% count(name_ctt ,Aspect_label , sort = TRUE)
+faspc<-faspc%>%spread(Aspect_label,n)#wrangling table
+colnames(faspc)[1] <- "Cover_tree_type"
+faspc%>% kbl(booktabs = TRUE, caption = "Frequency table Aspect",digits = 3, format.args = list(big.mark = ",",  scientific = FALSE), "latex")%>%kable_styling(latex_options = "hold_position") 
+```
+
+\newpage
+Then it was performed the chi-square analysis with a p-value of:
+
+``` {r chi2-aspect, eval=TRUE, echo=TRUE}
+chisq_test <- faspc %>%dplyr::select(-Cover_tree_type) %>% chisq.test()
+chisq_test$p.value #the values are correlated, not independent
+```
+Under that result, the aspect variable was not considered as part of the following analysis, since its values are correlated.
+
+### Wilderness area
+
+From the plot below (figure \@ref(fig:wa-barplot)), it can be seen that there are cover types not presented in the 4 wilderness areas. Only Lodgepole Pine is presented in all the research areas. Therefore, this variable could be considered for the algorithm since there is a certain location dependency for the cover types.
+
+```{r wa-barplot, echo=FALSE, fig.width=6, fig.height=4,message=FALSE,fig.cap='Tree distribution by Wilderness area'} 
+#Wilderness area
+train_tc %>% 
+  ggplot()+geom_bar(aes(x=name_ctt,fill=name_ctt)) +scale_y_continuous(trans='log10')+
+  labs(title="Using geom_label")+
+  facet_wrap(~Warea,nrow = 2,ncol=2)+
+  labs(x=NULL, y='Count in log10')+
+  labs(title="Cover tree type distribution by Wilderness area",fill="cover tree types")+
+  scale_x_discrete(labels = NULL,breaks=NULL)
+```
+
+### Soil type
+
+By climatic zone, it can be seen that the those more present species are not present in *Monate dry and montane*. Also, there are soil climatic zones more populous than others. This is just a clue that this variable can give us information to determine a certain pattern (figure \@ref(fig:soil-clima)). 
+
+```{r soil-clima,echo=FALSE, fig.width=6, fig.height=4,message=FALSE,fig.cap='Tree distribution by soil climatic zone' }
+#soil climatic zone
+train_tc %>% 
+  ggplot()+geom_bar(aes(x=name_ctt,fill=name_ctt)) +scale_y_continuous(trans='log10')+
+  labs(title="Using geom_label")+
+  facet_wrap(~s_clim_type,labeller = labeller(s_clim_type = 
+                                                c("S_cli_7" = "Subalpine",
+                                                  "S_cli_2" = "Lower Montane",
+                                                  "S_cli_3" = "Montane dry",
+                                                  "S_cli_4"= "Montane",
+                                                  "S_cli_5"= "Montane dry and montane",
+                                                  "S_cli_6"= "Montane and subalpine",
+                                                  "S_cli_8"= "Alpine")),nrow = 3,ncol=3)+
+  labs(x=NULL, y='Count in log10')+
+  labs(title="Cover tree type distribution by soil climatic zone",fill="cover tree types")+
+  scale_x_discrete(labels = NULL,breaks=NULL)+                                                                
+  theme(strip.text.x = element_text(size = 6))# Change font size
+```
+
+Regarding to the soil geological zone, there is a certain effect since not all species are located in a equally rate, indicating a pattern. For example, mixed sedimentary soils are suitable for only Spruce and Lodgepole Pine species (figure \@ref(fig:soil-geo)). 
+
+```{r soil-geo,echo=FALSE, fig.width=5, fig.height=3,message=FALSE,fig.cap='Tree distribution by soil geological zone' }
+##soil geological zone
+
+train_tc %>% 
+  ggplot()+geom_bar(aes(x=name_ctt,fill=name_ctt)) +scale_y_continuous(trans='log10')+
+  facet_wrap(~s_geo_type,labeller = labeller(s_geo_type = 
+                                               c("S_geo_7" = "Igneous or Metamorphic",
+                                                 "S_geo_1" = "Alluvium",
+                                                 "S_geo_2" = "Glacial",
+                                                 "S_geo_5"= "Mixed sedimentary"),nrow = 2,ncol=2))+
+  labs(x=NULL, y='Count in log10')+
+  labs(title="Cover tree type distribution by soil geological zone",fill="cover tree types")+
+  scale_x_discrete(labels = NULL,breaks=NULL)+                                                                # Change font size
+  theme(strip.text.x = element_text(size = 7))
+```
+
+
+### Quantitative variables
+
+Afther the adjustment with the qualitative variables, there are 9 quantitative variables to analyze:
+
+* Elevation
+* Slope
+* Horizontal distance to hidrology
+* Vertical distance to hidrology
+* Horizontal distance to roadways
+* Hillshade 9 am
+* Hillshade noon
+* Hillshade 3 pm
+* Horizontal distance to fire points
+
+
+#### Elevation
+\hfill\break 
+Through a visual analysis it can be defined that the tree species have different distribution according to the elevation (figure \@ref(fig:qboxplotelev)). Where it can be found similar distribution is with the Krummholz and Ponderosa Pine species. Therefore, is relevant to include other variables. 
+
+```{r qboxplotelev, echo=FALSE, fig.width=5, fig.height=3,message=FALSE,fig.cap='Treemap plot Wilderness area'} 
+train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Elevation),outlier.size=0.8)+
+  labs(title="Elevation")+
+  labs(x=NULL, y='meters')+
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+\newpage
+
+#### Slope
+\hfill\break 
+At difference with elevation variable, the species with the slope variable (figure \@ref(fig:qboxplotslope)),are more similar in their distribution, notwithstanding, is relevant that Krummholz and Ponderosa Pine species are different in this case, so this can help us to classify them better.
+
+```{r qboxplotslope, echo=FALSE, fig.width=5, fig.height=2.5,message=FALSE,fig.cap='Treemap plot Wilderness area'} 
+train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Slope),outlier.size=0.8)+
+  labs(title="Slope")+
+  labs(x=NULL, y='degrees')+
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+#### Hillshades values
+\hfill\break 
+In this case, we can compare the values of these 3 graphs (figure \@ref(fig:hill-plot)), indicating the chrome value in RGB units of the 7 species. In overall, they are quite similar but occurs a trend that the values start to become similar from the morning to the afternoon, being the *hillshade noon* the variable that provides less differences. As a result, it was decided that the variable *hillshade noon* be assessed through the ANOVA test (see [ANOVA Test] section). Another identified aspect was that a relevant difference was found in *Hillshade 9* am where Aspen and Cottonwood/Willow values are concentrated in higher values in comparison with the other species.
+
+```{r hill-plot, echo=FALSE, fig.width=6, fig.height=2.5,message=FALSE,fig.cap='Hillshade boxplots'} 
+f<-train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Hillshade_9am))+
+  labs(title="Hillshade 9am")+
+  labs(x=NULL, y='0 to 255 index')+
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        plot.title = element_text(size=10))
+g<-train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Hillshade_Noon))+
+  labs(title="Hillshade Noon")+
+  labs(x=NULL, y='0 to 255 index')+
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        plot.title = element_text(size=10))
+h<-train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Hillshade_3pm))+
+  labs(title="Hillshade 3pm")+
+  labs(x=NULL, y='0 to 255 index')+
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        plot.title = element_text(size=10))
+#Arranging hillshade variables
+grid.arrange(f, g, h,ncol = 3)
+```
+\newpage
+
+#### Horizontal and vertical distances
+\hfill\break 
+In relation to the horizontal distance to nearest surface water features (figure \@ref(fig:horver-plot)), there are similar distributions, so this variable does not provide much information. A consideration for this value is for the Cottonwood/Willow species which seems to crucial dependence to be near of waterbodies or waterlines.
+
+According to the vertical distance to the nearest water surface features, the mean values are mostly extremely similar, but it can be confirmed that the Cottonwood/Willow depends more on water closeness. Also in general the species in terms of vertical distance are close to water features. 
+
+Regarding the horizontal distance to roadways, here it can be found relevant differences. Now how to justify this variable? In general the roads are located in areas where is much simpler to build, so it can be an aggregation of slope and closeness to waterbodies. However, these are suppositions and this variable is just one of the variables where it can be seen a human effect. In this case, it can be identified 2 groups Krummholz, Lodgepole Pine and Spruce/Fir in one side and the rest in the other group. 
+
+Finally with the variable horizontal distance to fire points it can be seen a pattern. This can be justified in terms of preponderance to ignite much faster certain species than others, due to their shape and combination of chemical and structural plant [@BLAUW2017475]. Thus, it is assessed as a relevant variable. 
+
+```{r horver-plot, echo=FALSE, fig.width=4.5, fig.height=4.5,message=FALSE,fig.cap='Horizontal and vertical distances boxplots'} 
+c<-train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Horizontal_Distance_To_Hydrology))+
+  labs(title="Horizontal distance to hydrology")+
+  labs(x=NULL, y='meters')+
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        plot.title = element_text(size=9))
+d<-train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Vertical_Distance_To_Hydrology))+
+  labs(title="Vertical distance to hydrology")+
+  labs(x=NULL, y='meters')+
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        plot.title = element_text(size=9))
+e<-train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Horizontal_Distance_To_Roadways))+
+  labs(title="Horizontal distance to roadways")+
+  labs(x=NULL, y='meters')+
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        plot.title = element_text(size=9))
+i<-train_tc %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Horizontal_Distance_To_Fire_Points))+
+  labs(title="Horizontal distance to fire points")+
+  labs(x=NULL, y='meters')+
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        plot.title = element_text(size=9))
+grid.arrange(c,d,e,i,ncol = 2,nrow=2)
+```
+
+```{r delete-plot, echo=FALSE} 
+#the plots then are deleted 
+rm(c,d,e,f,g,h,i)
+```
+
+#### ANOVA Test
+\hfill\break 
+To provide a value to indicate that the variables are significant and different among them, it was applied a one-way ANOVA test. This allows to compare multiple groups of data of one independent variable, measuring the mean of independent groups [@Reb_ANOVA]. In this sense, the one-way ANOVA test was used for the variable *hillshade noon* to identify if the groups of this variable are different or not. 
+
+First, it was filtered out the outliers (figure \@ref(fig:ANOVA-plot-Filtered)). 
+
+```{r ANOVA-plot-Filtered, echo=FALSE, fig.width=5, fig.height=3,message=FALSE,fig.cap='Hillshade noon filtered out outliers'} 
+#the plots then are deleted 
+train_tc%>%filter(Hillshade_Noon>=190) %>% 
+  ggplot()+geom_boxplot(aes(x=name_ctt,y=Hillshade_Noon))+
+  labs(x=NULL, y='0 to 255 index')+
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        plot.title = element_text(size=14))
+```
+
+Then, it was calculated the inter and intra-group variance. If the p-value from this calculation is below 0.05, means that the variable is not correlated ($h_a$), and viceversa if the p-value is above 0.05 ($h_0$).
+
+In the results below it can be seen that  p-value (Pr>F) is statistically significant, so that indicates the *hillshade noon* groups values are significantly different, and thus be included in the analysed variables. 
+
+```{r oneway-ANOVA, echo=FALSE} 
+#p-value below 0.05 the variable is not correlated alternative hypothesis
+#p-value above 0.05 the variable is correlated hypothesis 0
+one.way <- aov(Hillshade_Noon ~name_ctt, data = train_tc)
+summary(one.way)
+```
+
+```{r delete-ANOVA, echo=FALSE} 
+#ANOVA result is deleted 
+rm(one.way)
+```
+
+After all this exploratory analysis and 2 applied tests (Chi-square and ANOVA test), **it was decided to use all the available data except the aspect variable** (Table \@ref(tab:sel-var)). 
+
+
+```{r sel-var, echo=FALSE, warning=FALSE,eval=TRUE}
+s_varia<-data.frame(colnames(train_tc[c(2,4:8)]),colnames(train_tc[c(9:11,34:36)])) 
+colnames(s_varia)<-c("Variables","Variables")#Dividing
+#the data in 2 for a better visualization     
+s_varia%>%kbl(format.args = list(big.mark = ",", 
+                                                scientific = FALSE),"latex", booktabs = TRUE, caption="Selected variables") %>%
+  kable_styling(font_size = 7)%>%kable_styling(latex_options = "hold_position")
+```
+
+## Random forest approach
+
+The random forest is the improvement of the decision tree approach. A decision tree consists of a flow chart of yes/no questions, which can be a classification or regression tree. The former refers to categorical variables, while the latter to continuous values. The method is to apply partitions, in simple words classify, to the predictors aiming to predict the outcome variable Y  [@rafalab]. 
+
+Meanwhile, the random forest is the modification of bagged decision trees to improve predictive performance [@Boehmke]. The difference with the bagged decision trees is that random forest reduces the tree correlation by injecting randomness into the tree-growing process [@Hastie]. Several decision trees are randomly created according to the predictor's variables. They can be classification and regression trees, being each decision tree independent and unique due to a bootstrap application. Afterwards, it is calculated the average of all of them producing a final prediction [@rafalab].
+
+
+
+[@Hastie] et al, founded that it is not necessar to create many trees to fit the random forest approach. They indicated that with 200 trees is sufficient. According to this, it was defined to use 300 trees for each random forest algorithm.
+
+### Interpretability
+
+One disadvantage of random forest is that the interpretability is low. There is no clue which predictor was part of a decision tree. Notwithstanding, it is possible to identify how many times a predictor was used in the random forest through the  *variable importance* function. Thus, being interpreted which variable is more important in the analysis. This is applied in the [Results interpretability] section. 
+
+### Tackling Imbalance through subsamplings
+
+It was decided to create subsamples from the training and test data since as it was seen in [Cover type] section, there are big disparities across the cover type classification. Thus, it was applied a down-sampling method, which match the observation of all the classes with the least prevalent class [@Kuhn-caret]. In this case, the training subsample represents the 3% of the original training data, while the test subsample almost the same.
+
+```{r test-set, echo=TRUE, warning=FALSE,eval=FALSE}
+#Creation of subsamples for the training and test dataset,
+#due to imbalance of the cover type classification
+#Is applied a down-sampling tuning 
+set.seed(13, sample.kind="Rounding")# the seed is a random selection
+down_train <- downSample(x = train_tc[, -ncol(train_tc)+1],
+                         y = factor(train_tc$Cover_Type))
+index<-sample(nrow(down_train))
+x<-train_tc[index,]# 15449 units
+y<-factor(train_tc$Cover_Type[index])
+
+down_test <- downSample(x = validation[, -ncol(validation)+1],
+                         y = factor(validation$Cover_Type))
+test_rf_index<-sample(nrow(down_test))
+x_rf_test<-validation[test_rf_index,] #3780 units
+y_rf_test<-factor(validation$Cover_Type[test_rf_index])
+```
+Afterwards, these results were saved to do not repeat previous script processes.
+
+### Creating Algorithms
+
+Since Random Forest applies a mix of combinations to find the best outcome, it was created 7 combinations according to its data characteristics. For all the algorithms it is present the quantitative variables, but for Wilderness Area and soil variables (climate and geological), it was considered if they are boolean or nominals, filtered out separately and jointly. The purpose of it is to find which data type is better for the Random Forest application. Also,  it is important to remember that *Aspect* is not considered anymore.
+
+* AL 1: Quantitative variables.
+* AL 2: Quantitative variables + Nominal Wilderness Area and Soil variables.
+* AL 3: Quantitative variables + Boolean Wilderness Area and Soil variables.
+* AL 4: Quantitative variables + Nominal Soil variables.
+* AL 5: Quantitative variables + Boolean Soil variables.
+* AL 6: Quantitative variables + Nominal Wilderness Area.
+* AL 7: Quantitative variables + Boolean Wilderness Area.
+
+# Results
+
+## Optimal Node and Cross validation
+
+The next step was to identify the optimal number of nodes for each of the above algorithms. The applied method was the cross validation, creating 3 analysis groups. It was not used more, due to the large time necessary to compute that process. 
+
+```{r node-optimal, echo=TRUE, warning=FALSE,eval=FALSE}
+control <- trainControl(method="cv", number = 3)#three cross validation
+grid <- data.frame(mtry = c(1,seq(5,25,5)))#number of randomly selected predictors for each split.
+train_rf <- train(x[, col_index], y,
+                  method = "rf",#indicates random forest method
+                  ntree = 150,#number of trees for each forest
+                  trControl = control,
+                  tuneGrid = grid,
+                  nSamp = 10000)#random sample of observations for each tree
+
+###For the rest was used the same logic 
+```
+
+Then it was compared the algorithms finding that the algorithm 3 provides the most optimal accuracy (see below).
+
+```{r Result-Node, echo=FALSE, warning=FALSE,eval=TRUE}
+load(file="rda_data/train_rf.rda")
+load(file="rda_data/train_rf2.rda")
+load(file="rda_data/train_rf3.rda")
+load(file="rda_data/train_rf4.rda")
+load(file="rda_data/train_rf5.rda")
+load(file="rda_data/train_rf6.rda")
+load(file="rda_data/train_rf7.rda")
+
+acc_max_t<-data.frame(c(1,2,3,4,5,6,7),c(max(train_rf$results$Accuracy),
+             max(train_rf2$results$Accuracy),
+             max(train_rf3$results$Accuracy),
+             max(train_rf4$results$Accuracy),
+             max(train_rf5$results$Accuracy),
+             max(train_rf6$results$Accuracy),
+             max(train_rf7$results$Accuracy)))
+colnames(acc_max_t)<-c("tr_group","max. acc")#column names
+max(acc_max_t$`max. acc`)# the best value was gotten with the sample 3
+```
+
+As it can be seen in the table \@ref(tab:table-accuracy) the differences between algorithms are marginal, but in terms of Machine Learning, they are relevant. At first sight, it can be stated that the presence of the soil and wilderness area variables make a difference to increase the accuracy. Without them (AL 1), there is a difference of 1.8% with AL 2, and of 2.2% with the AL 3. Secondly, when is compared the variables individually in terms of Nominal-Boolean, for the case of soil it was obtained better accuracy with Nominals, and for the Wilderness Area case better accuracy with boolean. Therefore, to determine which approach is the most suitable one, it could depend on how many classes are in each variable. More classes could be better a nominal approach, and for less classes (e.g. 4) a boolean approach. Notwithstanding, this assumption was not tested and it can be refuted, due to in several tests the accuracy turned to the other value.
+
+```{r table-accuracy,echo=FALSE,warning=FALSE}
+load(file="rda_data/acc_max_t.rda")
+acc_max_t%>%kbl(format.args = list(big.mark = ",", 
+                                                scientific = FALSE),"latex", booktabs = TRUE, caption="Table accuracy algorithm values") %>%
+  kable_styling(font_size = 7)%>%kable_styling(latex_options = "hold_position")
+```
+
+\newpage
+
+Additionally, here is proved that is not necessary to use many variables to get better results (Figure \@ref(fig:Plot-algcomparison)). Generally for six ALs, the best accuracy was obtained with less than 15 variables. Only for the best AL (AL 3) it was obtained with 20 variables, which also was not the maximum implemented in this analysis. 
+
+```{r Plot-algcomparison, echo=FALSE, warning=FALSE,eval=TRUE,fig.width=5.3, fig.height=2.3,message=FALSE,fig.cap='Comparison between algorithms'}
+grid.arrange(ggplot(train_rf)+
+               labs(title="train_rf1")+
+               labs(x=NULL, y='accuracy')+
+               ylim(0.55, 0.9)+
+               geom_point(aes(x=train_rf$bestTune$mtry,y=max(train_rf$results$Accuracy),color='red'),size=2.5,
+                          show.legend = FALSE),ggplot(train_rf2)+
+               labs(title="train_rf2")+
+               labs(x=NULL, y='accuracy')+
+               ylim(0.55, 0.9)+
+               geom_point(aes(x=train_rf2$bestTune$mtry,y=max(train_rf2$results$Accuracy),color='red'),size=2.5,
+                          show.legend = FALSE),ggplot(train_rf3)+
+               labs(title="train_rf3")+
+               labs(x=NULL, y='accuracy')+
+               ylim(0.55, 0.9)+
+               geom_point(aes(x=train_rf3$bestTune$mtry,y=max(train_rf3$results$Accuracy),color='red'),size=2.5,
+                          show.legend = FALSE),
+             ggplot(train_rf4)+
+               labs(title="train_rf4")+
+               labs(x=NULL, y='accuracy')+
+               ylim(0.55, 0.9)+
+               geom_point(aes(x=train_rf4$bestTune$mtry,y=max(train_rf4$results$Accuracy),color='red'),size=2.5,
+                          show.legend = FALSE),
+             ggplot(train_rf5)+
+               labs(title="train_rf5")+
+               labs(x=NULL, y='accuracy')+
+               ylim(0.55, 0.9)+
+               geom_point(aes(x=train_rf5$bestTune$mtry,y=max(train_rf5$results$Accuracy),color='red'),size=2.5,
+                          show.legend = FALSE),
+             ggplot(train_rf6)+
+               labs(title="train_rf6")+
+               labs(x=NULL, y='accuracy')+
+               ylim(0.55, 0.9)+
+               geom_point(aes(x=train_rf6$bestTune$mtry,y=max(train_rf6$results$Accuracy),color='red'),size=2.5,
+                          show.legend = FALSE),
+             ggplot(train_rf7)+
+               labs(title="train_rf7")+
+               labs(x=NULL, y='accuracy')+
+               ylim(0.55, 0.9)+
+               geom_point(aes(x=train_rf7$bestTune$mtry,y=max(train_rf7$results$Accuracy),color='red'),size=2.5,
+                          show.legend = FALSE),ncol = 3,nrow=3)
+```
+
+Afterwards, the optimized AL 3 was selected for the fitting phase. In the Figure \@ref(fig:fit-algo) it can be seen that it was run enough trees to test the algorithm.
+
+```{r fit-algo,echo=FALSE,warning=FALSE,fig.width=5.5, fig.height=2.5,message=FALSE,fig.cap='Evaluating Fitting algorithm 3'}
+load(file="rda_data/fit_rf.rda")
+plot(fit_rf)
+```
+
+\newpage
+
+Finally, it was tested over the subsample test data, achieving an acceptable accuracy, and sensitivity-specificity for each class.
+
+```{r test-subsample,echo=FALSE,warning=FALSE}
+load(file="rda_data/y_rf_test.rda")
+load(file="rda_data/y_hat_rf.rda")
+load(file="rda_data/x_rf_test.rda")
+load(file="rda_data/col_index3.rda")
+y_hat_rf <- predict(fit_rf, x_rf_test[ ,col_index3])
+cm <- confusionMatrix(y_hat_rf, y_rf_test)
+cm$overall["Accuracy"]
+cm$byClass[,1:2]
+```
+
+## Results interpretability
+
+To have an idea of which variable explained more for the algorithm, it was computed the variable importance (Table \@ref(tab:table-imp)). As expected the variable Elevation explained by far the algorithm, nonetheless, the horizontal distance to fire points and to roadways are relevant too. This can highlight, that for future analysis to take a deeper look to those variables.
+
+```{r table-imp,echo=FALSE,warning=FALSE}
+load(file="rda_data/imp.rda")
+imp<-as.data.frame(imp)
+imp%>%arrange(desc(MeanDecreaseGini))%>%kbl(format.args = list(big.mark = ",", 
+                                                scientific = FALSE),"latex", booktabs = TRUE, caption="Table Importance") %>%
+  kable_styling(font_size = 7)%>%kable_styling(latex_options = "hold_position")
+```
+\newpage
+
+# Conclusions
+
+Applying machine learning methods open a new way to predict phenomenon and or species distribution. The presented analysis illustrates how the random forest approach can identify tree species employing cartographic variables. In this term, this project dives into several techniques to get the final outcome. It was necessary to use several techniques acquired in the program Data Science certificate of HarvardX, such as statistical analysis, wrangling data and supervised machine learning. All these techniques and approaches are fundamental to providing a robust analysis method that can be useful for consultancy or research.
+
+Finally, it is essential to remark that more variables and details could be included surpassing the cartographic ones. For example, samples of precipitation or wind area classification can help to have a deeper look at this analysis. Moreover, this analysis is still in its infancy since it can still add more parameters or apply other methodologies such as k-means or Singular Value Decomposition approach. The world of machine learning is broad and continuous, extending its frontiers. As a result, it can improve the presented project much more and provide an algorithm with accuracy levels reaching close to perfection. 
