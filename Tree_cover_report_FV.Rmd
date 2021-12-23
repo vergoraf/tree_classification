@@ -349,9 +349,9 @@ Afther the adjustment with the qualitative variables, there are 9 quantitative v
 
 #### Elevation
 \hfill\break 
-Through a visual analysis it can be defined that the tree species have different distribution according to the elevation (figure \@ref(fig:qboxplotelev)). Where it can be found similar distribution is with the Krummholz and Ponderosa Pine species. Therefore, is relevant to include other variables. 
+Through a visual analysis it can be defined that the tree species have different distribution according to the elevation (figure \@ref(fig:qbpelev)). Where it can be found similar distribution is with the Krummholz and Ponderosa Pine species. Therefore, is relevant to include other variables. 
 
-```{r qboxplotelev, echo=FALSE, fig.width=5, fig.height=3,message=FALSE,fig.cap='Treemap plot Wilderness area'} 
+```{r qbpelev, echo=FALSE, fig.width=5, fig.height=3,message=FALSE,fig.cap='Treemap plot Wilderness area'} 
 train_tc %>% 
   ggplot()+geom_boxplot(aes(x=name_ctt,y=Elevation),outlier.size=0.8)+
   labs(title="Elevation")+
@@ -362,9 +362,9 @@ train_tc %>%
 
 #### Slope
 \hfill\break 
-At difference with elevation variable, the species with the slope variable (figure \@ref(fig:qboxplotslope)),are more similar in their distribution, notwithstanding, is relevant that Krummholz and Ponderosa Pine species are different in this case, so this can help us to classify them better.
+At difference with elevation variable, the species with the slope variable (figure \@ref(fig:bpslope)),are more similar in their distribution, notwithstanding, is relevant that Krummholz and Ponderosa Pine species are different in this case, so this can help us to classify them better.
 
-```{r qboxplotslope, echo=FALSE, fig.width=5, fig.height=2.5,message=FALSE,fig.cap='Treemap plot Wilderness area'} 
+```{r bpslope, echo=FALSE, fig.width=5, fig.height=2.5,message=FALSE,fig.cap='Treemap plot Wilderness area'} 
 train_tc %>% 
   ggplot()+geom_boxplot(aes(x=name_ctt,y=Slope),outlier.size=0.8)+
   labs(title="Slope")+
@@ -374,9 +374,9 @@ train_tc %>%
 
 #### Hillshades values
 \hfill\break 
-In this case, we can compare the values of these 3 graphs (figure \@ref(fig:hill-plot)), indicating the chrome value in RGB units of the 7 species. In overall, they are quite similar but occurs a trend that the values start to become similar from the morning to the afternoon, being the *hillshade noon* the variable that provides less differences. As a result, it was decided that the variable *hillshade noon* be assessed through the ANOVA test (see [ANOVA Test] section). Another identified aspect was that a relevant difference was found in *Hillshade 9* am where Aspen and Cottonwood/Willow values are concentrated in higher values in comparison with the other species.
+In this case, we can compare the values of these 3 graphs (figure \@ref(fig:hillplot)), indicating the chrome value in RGB units of the 7 species. In overall, they are quite similar but occurs a trend that the values start to become similar from the morning to the afternoon, being the *hillshade noon* the variable that provides less differences. As a result, it was decided that the variable *hillshade noon* be assessed through the ANOVA test (see [ANOVA Test] section). Another identified aspect was that a relevant difference was found in *Hillshade 9* am where Aspen and Cottonwood/Willow values are concentrated in higher values in comparison with the other species.
 
-```{r hill-plot, echo=FALSE, fig.width=6, fig.height=2.5,message=FALSE,fig.cap='Hillshade boxplots'} 
+```{r hillplot, echo=FALSE, fig.width=6, fig.height=2.5,message=FALSE,fig.cap='Hillshade boxplots'} 
 f<-train_tc %>% 
   ggplot()+geom_boxplot(aes(x=name_ctt,y=Hillshade_9am))+
   labs(title="Hillshade 9am")+
